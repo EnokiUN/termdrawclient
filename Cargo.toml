@@ -6,3 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.68"
+crossterm = "0.25.0"
+futures = "0.3.25"
+serde_json = "1.0.91"
+termdrawserver = { git = "https://github.com/enokiun/termdrawserver", version = "0.1.0", features = ["models"] }
+tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
+tokio-tungstenite = { version = "0.18.0", features = ["native-tls"] }
+uuid = "1.2.2"
