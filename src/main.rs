@@ -79,6 +79,12 @@ async fn main() -> Result<(), anyhow::Error> {
                 ))
                 .await
                 .context("Could not send JoinRoom OPCode")?;
+            if let Some(Ok(Message::Text(msg))) = stream.next().await {
+                if let Ok(ServerPayload::RoomNotFound) = serde_json::from_str(&msg) {
+                    anyhow::bail!("Unknown room, try again");
+                }
+            }
+
             id
         }
         None => {
@@ -90,16 +96,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 .context("Could not send CreateRoom OPCode")?;
             loop {
                 if let Some(Ok(Message::Text(msg))) = stream.next().await {
-                    if let Ok(payload) = serde_json::from_str::<ServerPayload>(&msg) {
-                        match payload {
-                            ServerPayload::NewRoom { room_id, .. } => {
-                                println!("Your room id is {}, go put this somewhere (press enter to continue)", room_id);
-                                stdin().read(&mut []).ok();
-                                break room_id;
-                            }
-                            ServerPayload::RoomNotFound => println!("Unknown room, try again"),
-                            _ => anyhow::bail!("Unexpected payload, bailing"),
-                        }
+                    if let Ok(ServerPayload::NewRoom { room_id, .. }) = serde_json::from_str(&msg) {
+                        println!(
+                            "Your room id is {}, go put this somewhere (press enter to continue)",
+                            room_id
+                        );
+                        stdin().read(&mut []).ok();
+                        break room_id;
                     }
                 }
             }
