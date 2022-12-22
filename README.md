@@ -1,4 +1,4 @@
-# Termdraw
+# TermdrawClient
 
 Turn your terminal into the drawing cavnas of your dream, this time as a
 collaborative experience!
