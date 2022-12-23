@@ -69,7 +69,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     };
 
-    let room = match room_id {
+    let (room, user_id) = match room_id {
         Some(id) => {
             let id = Uuid::parse_str(&id)
                 .with_context(|| format!("Could not parse {} as a valid v4 Uuid", id))?;
@@ -83,7 +83,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 if let Some(Ok(Message::Text(msg))) = stream.next().await {
                     let payload = serde_json::from_str::<ServerPayload>(&msg).unwrap();
                     match payload {
-                        ServerPayload::Join { room, .. } => break room,
+                        ServerPayload::Join { room, user_id } => {
+                            println!("Your user id is {} (press enter to continue)", user_id,);
+                            stdin().read(&mut []).ok();
+                            break (room, user_id);
+                        }
                         ServerPayload::RoomNotFound => anyhow::bail!("Unknown room, try again"),
                         _ => unreachable!(),
                     }
@@ -99,16 +103,22 @@ async fn main() -> Result<(), anyhow::Error> {
                 .context("Could not send CreateRoom OPCode")?;
             loop {
                 if let Some(Ok(Message::Text(msg))) = stream.next().await {
-                    if let Ok(ServerPayload::NewRoom { room_id, .. }) = serde_json::from_str(&msg) {
+                    if let Ok(ServerPayload::NewRoom { room_id, user_id }) =
+                        serde_json::from_str(&msg)
+                    {
                         println!(
-                            "Your room id is {}, go put this somewhere (press enter to continue)",
+                            "Your user id is {}\nYour room id is {}, go put this somewhere (press enter to continue)",
+                            user_id,
                             room_id
                         );
                         stdin().read(&mut []).ok();
-                        break Room {
-                            id: room_id,
-                            pixels: vec![],
-                        };
+                        break (
+                            Room {
+                                id: room_id,
+                                pixels: vec![],
+                            },
+                            user_id,
+                        );
                     }
                 }
             }
@@ -121,9 +131,20 @@ async fn main() -> Result<(), anyhow::Error> {
         while let Some(Ok(Message::Text(msg))) = rx.next().await {
             if let Ok(payload) = serde_json::from_str::<ServerPayload>(&msg) {
                 match payload {
-                    ServerPayload::Draw(pixel) => draw_pixel(&pixel),
-                    ServerPayload::Reset => {
-                        execute!(stdout(), ResetColor, Clear(ClearType::Purge)).unwrap()
+                    ServerPayload::Draw {
+                        user_id: event_user_id,
+                        pixel,
+                    } => {
+                        if event_user_id == user_id {
+                            continue;
+                        }
+                        draw_pixel(&pixel);
+                    }
+                    ServerPayload::Reset(event_user_id) => {
+                        if event_user_id == user_id {
+                            continue;
+                        }
+                        execute!(stdout(), ResetColor, Clear(ClearType::All)).unwrap();
                     }
                     _ => {}
                 }
@@ -133,7 +154,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     enable_raw_mode().unwrap();
     execute!(stdout(), EnableMouseCapture, Hide).unwrap();
-    execute!(stdout(), ResetColor, Clear(ClearType::Purge)).context("Unable to clear terminal")?;
+    execute!(stdout(), ResetColor, Clear(ClearType::All)).context("Unable to clear terminal")?;
     {
         let mut stdout = stdout();
         room.pixels.into_iter().for_each(|p| {
@@ -176,12 +197,12 @@ async fn main() -> Result<(), anyhow::Error> {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        execute!(stdout(), ResetColor, Clear(ClearType::Purge)).unwrap();
+                        execute!(stdout(), ResetColor, Clear(ClearType::All)).unwrap();
                         tx.send(Message::Text(
                             serde_json::to_string(&ClientPayload::Reset).unwrap(),
                         ))
                         .await
-                        .context("Could not send CreateRoom OPCode")?;
+                        .context("Could not send Reset OPCode")?;
                     }
                     KeyCode::Char('1') => {
                         colour = PixelColour::White;

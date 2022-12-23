@@ -941,7 +941,7 @@ dependencies = [
 [[package]]
 name = "termdrawserver"
 version = "0.1.0"
-source = "git+https://github.com/enokiun/termdrawserver#846fc805cf471d872a6794ff2a1a019ab9d9587c"
+source = "git+https://github.com/enokiun/termdrawserver#10c74993f4feec97ed406ec4b868a83b98327098"
 dependencies = [
  "anyhow",
  "dotenvy",
