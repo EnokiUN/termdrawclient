@@ -16,7 +16,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 use futures::{SinkExt, StreamExt};
-use termdrawserver::{ClientPayload, Pixel, PixelColour, ServerPayload};
+use termdrawserver::{ClientPayload, Pixel, PixelColour, Room, ServerPayload};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid::Uuid;
 
@@ -69,7 +69,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     };
 
-    let room_id = match room_id {
+    let room = match room_id {
         Some(id) => {
             let id = Uuid::parse_str(&id)
                 .with_context(|| format!("Could not parse {} as a valid v4 Uuid", id))?;
@@ -79,13 +79,16 @@ async fn main() -> Result<(), anyhow::Error> {
                 ))
                 .await
                 .context("Could not send JoinRoom OPCode")?;
-            if let Some(Ok(Message::Text(msg))) = stream.next().await {
-                if let Ok(ServerPayload::RoomNotFound) = serde_json::from_str(&msg) {
-                    anyhow::bail!("Unknown room, try again");
+            loop {
+                if let Some(Ok(Message::Text(msg))) = stream.next().await {
+                    let payload = serde_json::from_str::<ServerPayload>(&msg).unwrap();
+                    match payload {
+                        ServerPayload::Join { room, .. } => break room,
+                        ServerPayload::RoomNotFound => anyhow::bail!("Unknown room, try again"),
+                        _ => unreachable!(),
+                    }
                 }
             }
-
-            id
         }
         None => {
             stream
@@ -102,7 +105,10 @@ async fn main() -> Result<(), anyhow::Error> {
                             room_id
                         );
                         stdin().read(&mut []).ok();
-                        break room_id;
+                        break Room {
+                            id: room_id,
+                            pixels: vec![],
+                        };
                     }
                 }
             }
@@ -117,7 +123,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 match payload {
                     ServerPayload::Draw(pixel) => draw_pixel(&pixel),
                     ServerPayload::Reset => {
-                        execute!(stdout(), ResetColor, Clear(ClearType::All)).unwrap()
+                        execute!(stdout(), ResetColor, Clear(ClearType::Purge)).unwrap()
                     }
                     _ => {}
                 }
@@ -127,6 +133,22 @@ async fn main() -> Result<(), anyhow::Error> {
 
     enable_raw_mode().unwrap();
     execute!(stdout(), EnableMouseCapture, Hide).unwrap();
+    execute!(stdout(), ResetColor, Clear(ClearType::Purge)).context("Unable to clear terminal")?;
+    {
+        let mut stdout = stdout();
+        room.pixels.into_iter().for_each(|p| {
+            {
+                execute!(
+                    stdout,
+                    MoveTo(p.x as u16, p.y as u16),
+                    SetBackgroundColor(resolve_colour(&p.colour)),
+                    Print(" "),
+                    ResetColor,
+                )
+            }
+            .expect("Could not draw pixel")
+        });
+    }
 
     loop {
         if let Ok(true) = event::poll(Duration::from_millis(100)) {
@@ -154,7 +176,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        execute!(stdout(), ResetColor, Clear(ClearType::All)).unwrap();
+                        execute!(stdout(), ResetColor, Clear(ClearType::Purge)).unwrap();
                         tx.send(Message::Text(
                             serde_json::to_string(&ClientPayload::Reset).unwrap(),
                         ))
@@ -209,7 +231,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 _ => {}
             }
         }
-        execute!(stdout(), MoveTo(0, 0), Print(room_id)).context("Could not write room id")?;
     }
 
     execute!(
@@ -226,7 +247,19 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 fn draw_pixel(pixel: &Pixel) {
-    let colour = match pixel.colour {
+    let colour = resolve_colour(&pixel.colour);
+    execute!(
+        stdout(),
+        MoveTo(pixel.x as u16, pixel.y as u16),
+        SetBackgroundColor(colour),
+        Print(" "),
+        ResetColor,
+    )
+    .expect("Could not draw pixel");
+}
+
+fn resolve_colour(colour: &PixelColour) -> Color {
+    match colour {
         PixelColour::Clear => Color::Reset,
         PixelColour::White => Color::White,
         PixelColour::DarkRed => Color::DarkRed,
@@ -242,13 +275,5 @@ fn draw_pixel(pixel: &Pixel) {
         PixelColour::DarkGrey => Color::DarkGrey,
         PixelColour::Grey => Color::Grey,
         PixelColour::Black => Color::Black,
-    };
-    execute!(
-        stdout(),
-        MoveTo(pixel.x as u16, pixel.y as u16),
-        SetBackgroundColor(colour),
-        Print(" "),
-        ResetColor,
-    )
-    .expect("Could not draw pixel");
+    }
 }
